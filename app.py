@@ -1,0 +1,42 @@
+from flask import Flask, request, jsonify
+import re
+
+app = Flask(__name__)
+
+# Ruta para verificar que el servicio está funcionando
+@app.route('/')
+def home():
+    return jsonify({"message": "Servicio de Notificaciones en funcionamiento"}), 200
+
+# Ruta para enviar notificaciones
+@app.route('/notify', methods=['POST'])
+def send_notification():
+    try:
+        data = request.get_json()
+
+        # Validar que el cuerpo de la solicitud contiene los datos necesarios
+        if not data or 'email' not in data or 'message' not in data:
+            return jsonify({"error": "Faltan los datos requeridos: 'email' y 'message'"}), 400
+
+        # Validar formato de email
+        email = data['email']
+        if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+            return jsonify({"error": "Formato de correo electrónico inválido"}), 400
+
+        # Validar que el mensaje no esté vacío
+        message = data['message'].strip()
+        if not message:
+            return jsonify({"error": "El mensaje no puede estar vacío"}), 400
+
+        # Simulación del envío de un correo electrónico
+        print(f"Simulando envío de correo a {email} con el mensaje:\n{message}")
+
+        # Respuesta exitosa
+        return jsonify({"status": "Correo enviado exitosamente"}), 200
+
+    except Exception as e:
+        # Manejo de errores inesperados
+        return jsonify({"error": "Ocurrió un error inesperado", "details": str(e)}), 500
+
+if __name__ == '__main__':
+    app.run(debug=True)
