@@ -1,80 +1,121 @@
 from flask import Flask, request, jsonify
-from flask_sqlalchemy import SQLAlchemy
-from werkzeug.security import generate_password_hash, check_password_hash
-import re
+import requests
+from flask_cors import CORS
 
 app = Flask(__name__)
 
-# Configuración de la base de datos SQLite
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///auth.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-db = SQLAlchemy(app)
+# Habilitar CORS en todas las rutas
+CORS(app)
 
-# Modelo de Usuario
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    password = db.Column(db.String(255), nullable=False)
+# URLs de los microservicios
+AUTH_SERVICE_URL = "https://backend-autenticacion.onrender.com/auth"
+TASKS_SERVICE_URL = "https://backend-tareas-comentarios.onrender.com/tasks"
+NOTIFICATIONS_SERVICE_URL = "https://backend-notificaciones-6wot.onrender.com/notify"
 
-# Crear la base de datos
-with app.app_context():
-    db.create_all()
-
-## Rutas del microservicio
+# Rutas del API Gateway
 
 # Ruta para verificar que el servicio está funcionando
 @app.route('/')
 def home():
-    return jsonify({"message": "Servicio de Autenticación en funcionamiento"}), 200
+    return jsonify({"message": "API GATEWAY en funcionamiento"}), 200
 
 # Registro de usuario
-@app.route('/auth/register', methods=['POST'])
+@app.route('/register', methods=['POST'])
 def register():
-    data = request.get_json()
-
-    # Validar que los datos necesarios estén presentes
-    if not data or 'email' not in data or 'password' not in data:
-        return jsonify({"error": "Faltan los campos 'email' y 'password'"}), 400
-
-    # Validar formato de correo electrónico
-    if not re.match(r"[^@]+@[^@]+\.[^@]+", data['email']):
-        return jsonify({"error": "Formato de correo electrónico inválido"}), 400
-
-    # Verificar si el correo ya está registrado
-    if User.query.filter_by(email=data['email']).first():
-        return jsonify({"error": "El correo ya está registrado"}), 400
-
-    # Crear un nuevo usuario con la contraseña cifrada
-    hashed_password = generate_password_hash(data['password'], method='pbkdf2')
-    new_user = User(email=data['email'], password=hashed_password)
-    db.session.add(new_user)
-    db.session.commit()
-
-    return jsonify({"message": "Usuario registrado exitosamente"}), 201
+    try:
+        response = requests.post(f"{AUTH_SERVICE_URL}/register", json=request.get_json())
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": "Error al comunicarse con el servicio de autenticación", "details": str(e)}), 500
 
 # Inicio de sesión
-@app.route('/auth/login', methods=['POST'])
+@app.route('/login', methods=['POST'])
 def login():
-    data = request.get_json()
+    try:
+        response = requests.post(f"{AUTH_SERVICE_URL}/login", json=request.get_json())
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": "Error al comunicarse con el servicio de autenticación", "details": str(e)}), 500
 
-    # Validar que los datos necesarios estén presentes
-    if not data or 'email' not in data or 'password' not in data:
-        return jsonify({"error": "Faltan los campos 'email' y 'password'"}), 400
+# Crear una nueva tarea
+@app.route('/tasks', methods=['POST'])
+def create_task():
+    try:
+        # Crear la tarea en el servicio de tareas
+        response = requests.post(f"{TASKS_SERVICE_URL}", json=request.get_json())
 
-    # Validar formato de correo electrónico
-    if not re.match(r"[^@]+@[^@]+\.[^@]+", data['email']):
-        return jsonify({"error": "Formato de correo electrónico inválido"}), 400
+        # Si la tarea se crea correctamente, enviar la notificación
+        if response.status_code == 201:
+            task = response.json()  # La tarea recién creada
+            notification_data = {
+                "message": f"Se ha creado una nueva tarea: {task['title']}",  # Título de la tarea
+                "email": task.get('assigned_to')  # Suponiendo que cada tarea tiene un ID de usuario asignado
+            }
+            # Enviar la notificación usando el servicio de notificaciones
+            notification_response = requests.post(f"{NOTIFICATIONS_SERVICE_URL}", json=notification_data)
 
-    # Verificar si el correo existe
-    user = User.query.filter_by(email=data['email']).first()
-    if not user:
-        return jsonify({"error": "Usuario no encontrado"}), 404
+            if notification_response.status_code != 200:
+                return jsonify({"error": "Error al enviar la notificación"}), 500
 
-    # Verificar la contraseña
-    if not check_password_hash(user.password, data['password']):
-        return jsonify({"error": "Contraseña incorrecta"}), 401
+        return jsonify(response.json()), response.status_code
 
-    return jsonify({"message": "Inicio de sesión exitoso"}), 200
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": "Error al comunicarse con el servicio de tareas", "details": str(e)}), 500
+   
+
+# Listar todas las tareas
+@app.route('/tasks', methods=['GET'])
+def get_tasks():
+    try:
+        response = requests.get(f"{TASKS_SERVICE_URL}")
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": "Error al comunicarse con el servicio de tareas", "details": str(e)}), 500
+
+# Agregar un comentario a una tarea
+@app.route('/tasks/<int:task_id>/comments', methods=['POST'])
+def add_comment(task_id):
+    try:
+        response = requests.post(f"{TASKS_SERVICE_URL}/{task_id}/comments", json=request.get_json())
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": "Error al comunicarse con el servicio de tareas", "details": str(e)}), 500
+
+# Obtener comentarios de una tarea
+@app.route('/tasks/<int:task_id>/comments', methods=['GET'])
+def get_comments(task_id):
+    try:
+        response = requests.get(f"{TASKS_SERVICE_URL}/{task_id}/comments")
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": "Error al comunicarse con el servicio de tareas", "details": str(e)}), 500
+
+# Cambiar estado de una tarea
+@app.route('/tasks/<int:task_id>/status', methods=['PATCH'])
+def update_task_status(task_id):
+    try:
+        response = requests.patch(f"{TASKS_SERVICE_URL}/{task_id}/status", json=request.get_json())
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": "Error al comunicarse con el servicio de tareas", "details": str(e)}), 500
+
+# Eliminar una tarea
+@app.route('/tasks/<int:task_id>', methods=['DELETE'])
+def delete_task(task_id):
+    try:
+        response = requests.delete(f"{TASKS_SERVICE_URL}/{task_id}")
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": "Error al comunicarse con el servicio de tareas", "details": str(e)}), 500
+
+# Enviar una notificación
+@app.route('/notify', methods=['POST'])
+def send_notification():
+    try:
+        response = requests.post(f"{NOTIFICATIONS_SERVICE_URL}", json=request.get_json())
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": "Error al comunicarse con el servicio de notificaciones", "details": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5001)
+    app.run(debug=True)
