@@ -25,7 +25,7 @@ with app.app_context():
 # Ruta para verificar que el servicio está funcionando
 @app.route('/')
 def home():
-    return jsonify({"message": "Servicio de Autenticación en funcionamiento"}), 200
+    return jsonify({"message": "Servicio de Autenticacion en funcionamiento"}), 200
 
 # Registro de usuario
 @app.route('/auth/register', methods=['POST'])
@@ -77,4 +77,4 @@ def login():
     return jsonify({"message": "Inicio de sesión exitoso"}), 200
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5001)
+    app.run(debug=True)
