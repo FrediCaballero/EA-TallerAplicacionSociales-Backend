@@ -1,148 +1,80 @@
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+from werkzeug.security import generate_password_hash, check_password_hash
+import re
 
 app = Flask(__name__)
 
 # Configuración de la base de datos SQLite
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///tasks.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///auth.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-# Modelos de la base de datos
-class Task(db.Model):
+# Modelo de Usuario
+class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String(255), nullable=False)
-    description = db.Column(db.String(255), nullable=False)
-    assigned_to = db.Column(db.String(255), nullable=False)
-    status = db.Column(db.String(50), default='pending', nullable=False)
-    visible = db.Column(db.Boolean, default=True, nullable=False)
-
-class Comment(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    task_id = db.Column(db.Integer, db.ForeignKey('task.id'), nullable=False)
-    user = db.Column(db.String(255), nullable=False)
-    comment = db.Column(db.Text, nullable=False)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password = db.Column(db.String(255), nullable=False)
 
 # Crear la base de datos
 with app.app_context():
     db.create_all()
 
-## Rutas para el servicio de tareas
+## Rutas del microservicio
 
-# Crear una nueva tarea
-@app.route('/tasks', methods=['POST'])
-def create_task():
+# Ruta para verificar que el servicio está funcionando
+@app.route('/')
+def home():
+    return jsonify({"message": "Servicio de Notificaciones en funcionamiento"}), 200
+
+# Registro de usuario
+@app.route('/auth/register', methods=['POST'])
+def register():
     data = request.get_json()
 
-    if not data or 'title' not in data or 'description' not in data or 'assigned_to' not in data:
-        return jsonify({"error": "Faltan datos requeridos: 'title', 'description', 'assigned_to'"}), 400
+    # Validar que los datos necesarios estén presentes
+    if not data or 'email' not in data or 'password' not in data:
+        return jsonify({"error": "Faltan los campos 'email' y 'password'"}), 400
 
-    new_task = Task(
-        title=data['title'],
-        description=data['description'],
-        assigned_to=data['assigned_to']
-    )
-    db.session.add(new_task)
+    # Validar formato de correo electrónico
+    if not re.match(r"[^@]+@[^@]+\.[^@]+", data['email']):
+        return jsonify({"error": "Formato de correo electrónico inválido"}), 400
+
+    # Verificar si el correo ya está registrado
+    if User.query.filter_by(email=data['email']).first():
+        return jsonify({"error": "El correo ya está registrado"}), 400
+
+    # Crear un nuevo usuario con la contraseña cifrada
+    hashed_password = generate_password_hash(data['password'], method='pbkdf2')
+    new_user = User(email=data['email'], password=hashed_password)
+    db.session.add(new_user)
     db.session.commit()
 
-    return jsonify({
-        "id": new_task.id,
-        "title": new_task.title,
-        "description": new_task.description,
-        "assigned_to": new_task.assigned_to,
-        "status": new_task.status
-    }), 201
+    return jsonify({"message": "Usuario registrado exitosamente"}), 201
 
-# Obtener todas las tareas
-@app.route('/tasks', methods=['GET'])
-def get_tasks():
-    tasks = Task.query.filter_by(visible=True).all()
-    return jsonify([{
-        "id": task.id,
-        "title": task.title,
-        "description": task.description,
-        "assigned_to": task.assigned_to,
-        "status": task.status
-    } for task in tasks]), 200
-
-# Modificar el estado de una tarea
-@app.route('/tasks/<int:task_id>/status', methods=['PATCH'])
-def update_task_status(task_id):
-    data = request.get_json()
-    if not data or 'status' not in data:
-        return jsonify({"error": "Falta el campo 'status'"}), 400
-
-    task = Task.query.get(task_id)
-    if task and task.visible:
-        task.status = data['status']
-        db.session.commit()
-        return jsonify({"message": "Estado de la tarea actualizado", "task": {
-            "id": task.id,
-            "title": task.title,
-            "status": task.status
-        }}), 200
-
-    return jsonify({"error": "Tarea no encontrada o no visible"}), 404
-
-# Eliminar una tarea (eliminación lógica)
-@app.route('/tasks/<int:task_id>', methods=['DELETE'])
-def delete_task(task_id):
-    task = Task.query.get(task_id)
-    if task:
-        task.visible = False
-        db.session.commit()
-        return jsonify({"message": "Tarea eliminada correctamente"}), 200
-
-    return jsonify({"error": "Tarea no encontrada"}), 404
-
-# Agregar un comentario a una tarea
-@app.route('/tasks/<int:task_id>/comments', methods=['POST'])
-def add_comment(task_id):
+# Inicio de sesión
+@app.route('/auth/login', methods=['POST'])
+def login():
     data = request.get_json()
 
-    if not data or 'user' not in data or 'comment' not in data:
-        return jsonify({"error": "Faltan datos requeridos: 'user', 'comment'"}), 400
+    # Validar que los datos necesarios estén presentes
+    if not data or 'email' not in data or 'password' not in data:
+        return jsonify({"error": "Faltan los campos 'email' y 'password'"}), 400
 
-    task = Task.query.get(task_id)
-    if task and task.visible:
-        new_comment = Comment(
-            task_id=task_id,
-            user=data['user'],
-            comment=data['comment']
-        )
-        db.session.add(new_comment)
-        db.session.commit()
-        return jsonify({
-            "id": new_comment.id,
-            "task_id": new_comment.task_id,
-            "user": new_comment.user,
-            "comment": new_comment.comment,
-            "timestamp": new_comment.timestamp.isoformat()
-        }), 201
+    # Validar formato de correo electrónico
+    if not re.match(r"[^@]+@[^@]+\.[^@]+", data['email']):
+        return jsonify({"error": "Formato de correo electrónico inválido"}), 400
 
-    return jsonify({"error": "Tarea no encontrada o no visible"}), 404
+    # Verificar si el correo existe
+    user = User.query.filter_by(email=data['email']).first()
+    if not user:
+        return jsonify({"error": "Usuario no encontrado"}), 404
 
-# Obtener los comentarios de una tarea
-@app.route('/tasks/<int:task_id>/comments', methods=['GET'])
-def get_comments(task_id):
-    # Verificar que la tarea existe y es visible
-    task = Task.query.get(task_id)
-    if not task or not task.visible:
-        return jsonify({"error": "Tarea no encontrada o no visible"}), 404
+    # Verificar la contraseña
+    if not check_password_hash(user.password, data['password']):
+        return jsonify({"error": "Contraseña incorrecta"}), 401
 
-    # Obtener los comentarios de la tarea
-    comments = Comment.query.filter_by(task_id=task_id).all()
-    if not comments:
-        return jsonify({"error": "No hay comentarios para esta tarea"}), 404
-
-    return jsonify([{
-        "id": comment.id,
-        "user": comment.user,
-        "comment": comment.comment,
-        "timestamp": comment.timestamp.isoformat()
-    } for comment in comments]), 200
+    return jsonify({"message": "Inicio de sesión exitoso"}), 200
 
 if __name__ == '__main__':
     app.run(debug=True)

@@ -1,2 +1,3 @@
-notificaciones/app.py
-instance/tasks.db
+notificaciones/*
+instance/*
+tareas y comentarios/*
